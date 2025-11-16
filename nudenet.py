@@ -1,3 +1,4 @@
+import json
 import math
 import os
 
@@ -159,10 +160,13 @@ class NudenetDetector:
             "required": {
                 "image": ("IMAGE",)
             },
+            "optional": {
+                "export_json": ("BOOLEAN", {"default": False})
+            }
         }
 
-    RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = ("IMAGE",)
+    RETURN_TYPES = ("IMAGE", "STRING",)
+    RETURN_NAMES = ("image", "detections_json",)
 
     FUNCTION = "detect_and_blur"
 
@@ -170,8 +174,10 @@ class NudenetDetector:
 
     CATEGORY = "nsfw"
 
-    def detect_and_blur(self, image: torch.Tensor):
+    def detect_and_blur(self, image: torch.Tensor, export_json=False):
         all_imgs = []
+        all_detections = []
+        
         for i in range(len(image)):
             img = image[i].numpy()
             preprocessed_image, resize_factor, pad_left, pad_top = preprocess(
@@ -183,6 +189,19 @@ class NudenetDetector:
                 detection for detection in detections if
                 detection["class"] in classes_to_detect and detection["score"] > classes_to_detect[detection["class"]]
             ]
+            
+            # Format detections for JSON output
+            if export_json:
+                formatted_detections = []
+                for det in detections:
+                    box = det["box"]
+                    formatted_detections.append({
+                        "label": det["class"],
+                        "score": float(det["score"]),
+                        "box": [int(box[0]), int(box[1]), int(box[2]), int(box[3])]  # [x, y, w, h]
+                    })
+                all_detections.append(formatted_detections)
+            
             # all_detections.append(detections)
             if detections:
                 print("NSFW DETECTED: ", detections)
@@ -195,20 +214,132 @@ class NudenetDetector:
             #     # change these pixels to pure black
             #     img[y: y + h, x: x + w] = (0, 0, 0)
             all_imgs.append(img)
-        return (torch.tensor(np.array(all_imgs)),)
+        
+        # Convert detections to JSON string
+        detections_json = json.dumps(all_detections) if export_json else "[]"
+        
+        return (torch.tensor(np.array(all_imgs)), detections_json,)
 
     # @classmethod
     # def IS_CHANGED(s, image, string_field, int_field, float_field, print_to_screen):
     #    return ""
 
 
+class NudenetDetectorMeta:
+    """
+    NudenetDetector variant that returns both the processed image AND 
+    detection metadata as JSON string for downstream processing.
+    Also automatically saves JSON to disk alongside images.
+    """
+
+    def __init__(self, providers=None):
+        self.onnx_session = onnxruntime.InferenceSession(
+            os.path.join(os.path.dirname(__file__), "best.onnx"),
+            providers=["CPUExecutionProvider"]
+        )
+        model_inputs = self.onnx_session.get_inputs()
+        input_shape = model_inputs[0].shape
+        self.input_width = input_shape[2]  # 320
+        self.input_height = input_shape[3]  # 320
+        self.input_name = model_inputs[0].name
+        self.output_dir = self.get_output_directory()
+
+    def get_output_directory(self):
+        """Get ComfyUI's output directory"""
+        try:
+            import folder_paths
+            return folder_paths.get_output_directory()
+        except:
+            # Fallback if folder_paths not available
+            return os.path.join(os.path.dirname(__file__), "..", "..", "output")
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "filename_prefix": ("STRING", {"default": "ComfyUI"}),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE", "STRING",)
+    RETURN_NAMES = ("image", "detections_json",)
+
+    FUNCTION = "detect_and_blur"
+
+    CATEGORY = "nsfw"
+
+    def detect_and_blur(self, image: torch.Tensor, filename_prefix="ComfyUI"):
+        all_imgs = []
+        all_detections = []
+        
+        for i in range(len(image)):
+            img = image[i].numpy()
+            preprocessed_image, resize_factor, pad_left, pad_top = preprocess(
+                img, self.input_width
+            )
+            outputs = self.onnx_session.run(None, {self.input_name: preprocessed_image})
+            detections = _postprocess(outputs, resize_factor, pad_left, pad_top)
+            
+            # Filter detections based on classes and thresholds
+            filtered_detections = [
+                detection for detection in detections if
+                detection["class"] in classes_to_detect and detection["score"] > classes_to_detect[detection["class"]]
+            ]
+            
+            # Store ALL detections (not just filtered ones) for JSON output
+            # Format them consistently for yuser-server
+            formatted_detections = []
+            for det in detections:
+                box = det["box"]
+                formatted_detections.append({
+                    "label": det["class"],
+                    "score": float(det["score"]),
+                    "box": [int(box[0]), int(box[1]), int(box[2]), int(box[3])]  # [x, y, w, h]
+                })
+            
+            all_detections.append(formatted_detections)
+            
+            # Apply pixelation if NSFW content detected (using filtered detections)
+            if filtered_detections:
+                print("NSFW DETECTED: ", filtered_detections)
+                img = pixelate_image(img, 16)
+
+            all_imgs.append(img)
+        
+        # Convert detections to JSON string
+        detections_json = json.dumps(all_detections)
+        
+        # Save JSON file to disk automatically
+        # Generate filename based on counter (similar to how ComfyUI saves images)
+        try:
+            counter = 0
+            while True:
+                filename = f"{filename_prefix}_{counter:05d}_.nsfw.json"
+                filepath = os.path.join(self.output_dir, filename)
+                if not os.path.exists(filepath):
+                    break
+                counter += 1
+            
+            # Write JSON file
+            with open(filepath, 'w') as f:
+                f.write(detections_json)
+            print(f"Saved NSFW metadata to: {filepath}")
+        except Exception as e:
+            print(f"Warning: Could not save NSFW metadata file: {e}")
+        
+        return (torch.tensor(np.array(all_imgs)), detections_json,)
+
+
 # A dictionary that contains all nodes you want to export with their names
 # NOTE: names should be globally unique
 NODE_CLASS_MAPPINGS = {
-    "NudenetDetector": NudenetDetector
+    "NudenetDetector": NudenetDetector,
+    "NudenetDetectorMeta": NudenetDetectorMeta
 }
 
 # A dictionary that contains the friendly/humanly readable titles for the nodes
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "NudenetDetector": "NudenetDetector"
+    "NudenetDetector": "NudenetDetector",
+    "NudenetDetectorMeta": "NudenetDetector (with JSON metadata)"
 }
