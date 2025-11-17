@@ -266,6 +266,8 @@ class NudenetDetectorMeta:
     RETURN_NAMES = ("image", "detections_json",)
 
     FUNCTION = "detect_and_blur"
+    
+    OUTPUT_NODE = True  # Mark as output node so results appear in history
 
     CATEGORY = "nsfw"
 
