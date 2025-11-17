@@ -300,33 +300,15 @@ class NudenetDetectorMeta:
             
             all_detections.append(formatted_detections)
             
-            # Apply pixelation if NSFW content detected (using filtered detections)
+            # Note: Blurring removed - client handles display logic
             if filtered_detections:
                 print("NSFW DETECTED: ", filtered_detections)
-                img = pixelate_image(img, 16)
 
             all_imgs.append(img)
         
         # Convert detections to JSON string
+        # No longer saving to disk - data flows through workflow outputs directly
         detections_json = json.dumps(all_detections)
-        
-        # Save JSON file to disk automatically
-        # Generate filename based on counter (similar to how ComfyUI saves images)
-        try:
-            counter = 0
-            while True:
-                filename = f"{filename_prefix}_{counter:05d}_.nsfw.json"
-                filepath = os.path.join(self.output_dir, filename)
-                if not os.path.exists(filepath):
-                    break
-                counter += 1
-            
-            # Write JSON file
-            with open(filepath, 'w') as f:
-                f.write(detections_json)
-            print(f"Saved NSFW metadata to: {filepath}")
-        except Exception as e:
-            print(f"Warning: Could not save NSFW metadata file: {e}")
         
         return (torch.tensor(np.array(all_imgs)), detections_json,)
 
