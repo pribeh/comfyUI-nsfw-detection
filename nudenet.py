@@ -273,7 +273,7 @@ class NudenetDetectorMeta:
 
     def detect_and_blur(self, image: torch.Tensor, filename_prefix="ComfyUI"):
         all_imgs = []
-        all_detections = []
+        all_detections = [] 
         
         for i in range(len(image)):
             img = image[i].numpy()
