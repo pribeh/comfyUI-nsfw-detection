@@ -309,8 +309,19 @@ class NudenetDetectorMeta:
             all_imgs.append(img)
         
         # Convert detections to JSON string
-        # No longer saving to disk - data flows through workflow outputs directly
         detections_json = json.dumps(all_detections)
+        
+        # Write sidecar .nsfw.json file for handler fallback
+        try:
+            import os
+            output_dir = self.get_output_directory()
+            json_filename = f"{filename_prefix}.nsfw.json"
+            json_path = os.path.join(output_dir, json_filename)
+            with open(json_path, 'w') as f:
+                f.write(detections_json)
+            print(f"NudenetDetectorMeta: Wrote NSFW metadata to {json_filename}")
+        except Exception as e:
+            print(f"NudenetDetectorMeta: Failed to write sidecar JSON: {e}")
         
         return (torch.tensor(np.array(all_imgs)), detections_json,)
 
