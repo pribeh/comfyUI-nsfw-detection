@@ -311,17 +311,44 @@ class NudenetDetectorMeta:
         # Convert detections to JSON string
         detections_json = json.dumps(all_detections)
         
-        # Write sidecar .nsfw.json file for handler fallback
+        # Write per-image sidecar .nsfw.json files for handler fallback
+        # This matches SaveImage's naming pattern: {prefix}_{counter:05d}_.png
+        # We can't predict SaveImage's exact counter, but we can get close by reading
+        # the current counter from folder_paths or using a local counter
         try:
             import os
             output_dir = self.get_output_directory()
-            json_filename = f"{filename_prefix}.nsfw.json"
-            json_path = os.path.join(output_dir, json_filename)
-            with open(json_path, 'w') as f:
-                f.write(detections_json)
-            print(f"NudenetDetectorMeta: Wrote NSFW metadata to {json_filename}")
+            
+            # Try to get SaveImage's counter to match numbering
+            # SaveImage uses folder_paths.get_save_image_path() which tracks a counter
+            try:
+                import folder_paths
+                # Get the current counter value (this is a best-effort approach)
+                # The counter is stored in folder_paths and increments with each SaveImage call
+                counter = folder_paths.get_save_image_path(filename_prefix, output_dir)[1]
+            except:
+                # Fallback: start from 0 if we can't access the counter
+                # This won't match perfectly but is better than nothing
+                counter = 0
+            
+            # Write one JSON file per image in the batch
+            for i in range(len(image)):
+                # Match SaveImage's naming: {prefix}_{counter:05d}_.png → {prefix}_{counter:05d}_.nsfw.json
+                json_filename = f"{filename_prefix}_{counter:05d}_.nsfw.json"
+                json_path = os.path.join(output_dir, json_filename)
+                
+                # Write just this image's detections (not the full batch)
+                image_detections = all_detections[i]
+                with open(json_path, 'w') as f:
+                    json.dump(image_detections, f)
+                
+                print(f"NudenetDetectorMeta: Wrote NSFW metadata to {json_filename}")
+                counter += 1
+                
         except Exception as e:
             print(f"NudenetDetectorMeta: Failed to write sidecar JSON: {e}")
+            import traceback
+            traceback.print_exc()
         
         return (torch.tensor(np.array(all_imgs)), detections_json,)
 
