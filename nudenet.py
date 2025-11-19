@@ -273,7 +273,8 @@ class NudenetDetectorMeta:
 
     def detect_and_blur(self, image: torch.Tensor, filename_prefix="ComfyUI"):
         all_imgs = []
-        all_detections = [] 
+        all_detections = []
+        all_summaries = []
         
         for i in range(len(image)):
             img = image[i].numpy()
@@ -292,15 +293,20 @@ class NudenetDetectorMeta:
             # Store ALL detections (not just filtered ones) for JSON output
             # Format them consistently for yuser-server
             formatted_detections = []
+            summary_scores = {}
             for det in detections:
                 box = det["box"]
+                label = det["class"]
+                score = float(det["score"])
                 formatted_detections.append({
-                    "label": det["class"],
-                    "score": float(det["score"]),
+                    "label": label,
+                    "score": score,
                     "box": [int(box[0]), int(box[1]), int(box[2]), int(box[3])]  # [x, y, w, h]
                 })
+                summary_scores[label] = max(summary_scores.get(label, 0.0), score)
             
             all_detections.append(formatted_detections)
+            all_summaries.append(summary_scores)
             
             # Note: Blurring removed - client handles display logic
             if filtered_detections:
@@ -308,8 +314,13 @@ class NudenetDetectorMeta:
 
             all_imgs.append(img)
         
-        # Convert detections to JSON string
-        detections_json = json.dumps(all_detections)
+        # Convert detections to JSON string (versioned payload for downstream normalization)
+        detections_payload = {
+            "version": 2,
+            "detections": all_detections,
+            "summaries": all_summaries,
+        }
+        detections_json = json.dumps(detections_payload)
         
         # Write aggregate .nsfw.json file for handler fallback (indexed by image order)
         try:
